@@ -112,9 +112,24 @@ class ChampSelect:
         }
 
         if not self.active:
+            #check if client is open 
+            if session is None:
+                self.reset()
+                return updated, dict_updated
+            # check if client is in champ select
+
+            if session['isSpectating']:
+                self.reset()
+                return updated, dict_updated
+            # check if champ select has started
             if not session['hasSimultaneousPicks']:
                 self.active = True
-
+                updated = True
+                dict_updated['mode'] = 'ban'
+            else:
+                self.reset()
+                return updated, dict_updated
+                
             if len(session['actions'][0]) == 10:
                 # solo ranked/flex: start with 10 bans
                 self.draft_type = 'solo'

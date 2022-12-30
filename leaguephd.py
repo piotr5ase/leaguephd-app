@@ -8,15 +8,19 @@ from qasync import QEventLoop, QThreadExecutor
 from PyQt5.QtWidgets import QApplication, QMainWindow, QStatusBar, QLabel
 from PyQt5.QtWebEngineWidgets import QWebEngineView
 from PyQt5.QtCore import QUrl
+from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QIcon, QDesktopServices
 from lcu_driver import Connector
 from ChampSelect import ChampSelect
 
 
 class MainWindow(QMainWindow):
+
     def __init__(self, logger=None):
         super(MainWindow, self).__init__()
-
+        # fix ram usage
+        self.setAttribute(Qt.WA_DeleteOnClose)
+        
         self.setWindowTitle("League PhD")
 
         # browser
@@ -24,12 +28,8 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(self.web_view)
 
         # version
-        try:
-            with open('version.txt', 'r') as f:
-                self.version = f.read()
-        except FileNotFoundError:
-            self.version = None
-
+        self.version = "1.3.0"
+    
         # status bar: connection status
         self.status_bar = QStatusBar(self)
         self.status_bar.setSizeGripEnabled(False)
@@ -41,13 +41,11 @@ class MainWindow(QMainWindow):
 
         self.setStatusBar(self.status_bar)
 
-        # check updates
-        self.check_update()
 
         # logger
         self.logger = logger
 
-        self.setWindowIcon(QIcon(str(Path('assets/icon.ico'))))
+        self.setWindowIcon(QIcon(str(Path('icon.ico'))))
 
     def call_update(self, result_dict, dict_updated):
         self.logger.info('sent a call')
@@ -65,10 +63,10 @@ class MainWindow(QMainWindow):
 
     def check_update(self):
         try:
-            latest_version = requests.get("https://api.github.com/repos/leaguephd/leaguephd-app/releases/latest").json()['tag_name']
+            latest_version = requests.get("https://api.github.com/repos/piotr5ase/leaguephd-app/releases/latest").json()['tag_name']
 
             if self.version != latest_version:
-                self.label_update.setText(f"Current: {self.version} (<a href=\"https://github.com/leaguephd/leaguephd-app/releases\">{latest_version} available</a>) ")
+                self.label_update.setText(f"Current: {self.version} (<a href=\"https://github.com/piotr5ase/leaguephd-app/releases\">{latest_version} available</a>) ")
                 self.label_update.setOpenExternalLinks(True)
         except KeyError:
             pass
@@ -84,6 +82,8 @@ class WebView(QWebEngineView):
         self.base_url = QUrl("https://www.leaguephd.com/stats/pick-now/")
         self.load(self.base_url)
         self.loadFinished.connect(self.onLoadFinished)
+        self.page().profile().setHttpCacheType(0)
+
 
     def onLoadFinished(self):
         try:
@@ -123,6 +123,22 @@ def working():
         # check whether session is in place
         resp = await connection.request('get', '/lol-champ-select/v1/session')
         await page_loaded.wait()
+        if resp.status == 408:
+            logger.info("session timed out")
+        else:
+            logger.info("session is already in place")
+            data = await resp.json()
+            logger.info(data)
+
+            if not window.web_view.is_pick_now():
+                window.go_to_pick_now()
+                await page_loaded.wait()
+
+            champselect.reset()
+            updated, dict_updated = champselect.update(data)
+            logger.info(champselect)
+            if updated:
+                window.call_update(champselect.__repr__(), dict_updated)
         if resp.status == 200:
             data = await resp.json()
             logger.info("session is already in place")
@@ -142,10 +158,14 @@ def working():
 
     # fired when League Client is closed (or disconnected from websocket)
     @connector.close
-    async def disconnect(_):
+    async def disconnect(connection):
         logger.info('The client have been closed!')
         window.status_bar.showMessage("Waiting for a connection...")
-        await connector.stop()
+        connector.stop()
+        await page_loaded.wait()
+
+
+
 
     # subscribe to '/lol-summoner/v1/session' endpoint
     @connector.ws.register('/lol-champ-select/v1/session', event_types=('CREATE', 'UPDATE', 'DELETE',))
@@ -181,7 +201,7 @@ async def main():
 
 
 if __name__ == '__main__':
-    # argparse
+    # argparse for debug mode (logging) 
     parser = argparse.ArgumentParser()
     parser.add_argument('--debug', action='store_true')
     args = parser.parse_args()
@@ -192,12 +212,19 @@ if __name__ == '__main__':
         hdlr = logging.FileHandler(Path('logs/session.log'))
         logger.addHandler(hdlr)
         logger.addHandler(logging.StreamHandler())
-        logger.setLevel(logging.INFO)
+        logger.setLevel(logging.DEBUG)
 
     # ChampSelect
     champselect = ChampSelect()
+    # less ram usage
+    QApplication.setAttribute(Qt.AA_EnableHighDpiScaling)
+    QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps)
+    QApplication.setAttribute(Qt.AA_ShareOpenGLContexts)
+    QApplication.setAttribute(Qt.AA_UseSoftwareOpenGL)
+    QApplication.setAttribute(Qt.AA_UseDesktopOpenGL)
+    QApplication.setAttribute(Qt.AA_UseOpenGLES)
 
-    # Qt
+
     app = QApplication([])
     loop = QEventLoop(app)
     asyncio.set_event_loop(loop)

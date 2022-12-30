@@ -1,2 +1,7 @@
+.gitignore
 /build
 /dist
+/__pycache__
+/.git
+/.vscode
+/logs
